@@ -1,4 +1,5 @@
 zzu-auth
+zzu-auth-*
 *.o
 *.ipk
 
