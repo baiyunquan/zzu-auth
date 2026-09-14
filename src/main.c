@@ -165,7 +165,11 @@ int main(int argc, char **argv)
     const char *suffix = NULL;
     int suffix_specified = 0;
     const char *check_url = DEFAULT_CHECK_URL;
-    const char *portal_opt = NULL;
+#ifdef PORTAL_SERVER
+    const char *portal_opt = PORTAL_SERVER;
+#else
+    const char *portal_opt = DEFAULT_PORTAL_SERVER;
+#endif
     const char *bind_ifname = NULL;
     int interval = DEFAULT_INTERVAL_SEC;
     int timeout = DEFAULT_TIMEOUT_SEC;
@@ -292,7 +296,7 @@ int main(int argc, char **argv)
     int have_fixed_info = 0;
 
     memset(&info, 0, sizeof info);
-    if (portal_opt != NULL) {
+    if (portal_opt != NULL && portal_opt[0] != '\0') {
         char host[128];
         int port = 801;
         if (parse_host_port(portal_opt, host, sizeof host, &port) != 0) {
@@ -301,14 +305,15 @@ int main(int argc, char **argv)
         }
         snprintf(info.portal_server, sizeof info.portal_server,
                  "http://%s:%d", host, port);
-        if (get_outbound_ip(host, port, bind_ifname, info.user_ip,
-                            sizeof info.user_ip) != 0) {
-            log_error("无法确定本机出口 IP（检查网络连接）");
-            return 2;
-        }
-        log_info("手动模式: portal=%s user_ip=%s", info.portal_server,
-                 info.user_ip);
         have_fixed_info = 1;
+        if (get_outbound_ip(host, port, bind_ifname, info.user_ip,
+                            sizeof info.user_ip) == 0) {
+            log_info("固定 Portal: %s (网卡 %s IP: %s)", info.portal_server,
+                     bind_ifname ? bind_ifname : "default", info.user_ip);
+        } else {
+            log_info("固定 Portal: %s (网卡 %s 暂未获取到 IP，将在认证时动态获取)",
+                     info.portal_server, bind_ifname ? bind_ifname : "default");
+        }
     }
 
     if (bind_ifname != NULL && bind_ifname[0] != '\0')
@@ -324,15 +329,25 @@ int main(int argc, char **argv)
         char err[512] = "";
 
         if (have_fixed_info) {
-            /* 手动模式：先检测连通性，掉线再认证 */
+            /* 固定模式：先检测连通性，掉线再认证 */
             int st = portal_check(check_url, timeout, bind_ifname, err, sizeof err);
             if (st == PORTAL_ONLINE) {
                 log_debug("网络在线，无需认证");
                 exit_code = 0;
             } else if (st == PORTAL_OFFLINE) {
-                log_info("检测到掉线，开始认证...");
-                exit_code = do_auth(&info, account, password, encrypt,
-                                    timeout, bind_ifname);
+                char host[128];
+                int port = 801;
+                parse_host_port(portal_opt, host, sizeof host, &port);
+                if (get_outbound_ip(host, port, bind_ifname, info.user_ip,
+                                    sizeof info.user_ip) == 0) {
+                    log_info("检测到未认证/掉线（网卡 %s IP: %s），开始认证...",
+                             bind_ifname ? bind_ifname : "default", info.user_ip);
+                    exit_code = do_auth(&info, account, password, encrypt,
+                                        timeout, bind_ifname);
+                } else {
+                    log_warn("网卡 %s 暂未获取到出口 IP，等待下次重试...",
+                             bind_ifname ? bind_ifname : "default");
+                }
             } else {
                 log_warn("连通性检测失败: %s", err);
             }

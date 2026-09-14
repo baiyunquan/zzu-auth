@@ -18,6 +18,8 @@ enum {
     PORTAL_ONLINE = 1   /* 已认证，网络可用 */
 };
 
+#define DEFAULT_PORTAL_SERVER "172.16.2.9:801"
+
 typedef struct {
     char portal_server[256]; /* Portal 服务地址，形如 http://172.16.2.9:801 */
     char user_ip[64];        /* 校园网分配给本机的 IP（wlan_user_ip） */

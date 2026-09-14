@@ -269,8 +269,11 @@ int portal_check(const char *check_url, int timeout, const char *bind_ifname,
     http_response res;
     int ret = PORTAL_OFFLINE;
 
-    if (http_get(check_url, bind_ifname, &res, timeout, err, errsz) != 0)
-        return PORTAL_ERROR;
+    if (http_get(check_url, bind_ifname, &res, timeout, err, errsz) != 0) {
+        /* 在校园网环境下，未认证时公网流量被直接阻断/丢弃，导致请求超时。
+         * 此时判定为未认证（PORTAL_OFFLINE），从而触发认证流程。 */
+        return PORTAL_OFFLINE;
+    }
 
     if (res.status == 204) {
         ret = PORTAL_ONLINE; /* generate_204 语义：网络可用 */
@@ -468,11 +471,15 @@ int portal_auth(const portal_info *info, const char *account,
     b64_encode((const unsigned char *)password, strlen(password), b64_pwd);
     snprintf(full_account, sizeof full_account, ",0,%s", account);
 
+    const char *uip = info->user_ip;
+    if (strncmp(uip, "192.168.", 8) == 0)
+        uip = "";
+
     if (query_put(query, sizeof query, &off, "callback", "dr1003", xkey, encrypt) != 0 ||
         query_put(query, sizeof query, &off, "login_method", "1", xkey, encrypt) != 0 ||
         query_put(query, sizeof query, &off, "user_account", full_account, xkey, encrypt) != 0 ||
         query_put(query, sizeof query, &off, "user_password", b64_pwd, xkey, encrypt) != 0 ||
-        query_put(query, sizeof query, &off, "wlan_user_ip", info->user_ip, xkey, encrypt) != 0 ||
+        query_put(query, sizeof query, &off, "wlan_user_ip", uip, xkey, encrypt) != 0 ||
         query_put(query, sizeof query, &off, "wlan_user_ipv6", "", xkey, encrypt) != 0 ||
         query_put(query, sizeof query, &off, "wlan_user_mac", "000000000000", xkey, encrypt) != 0 ||
         query_put(query, sizeof query, &off, "wlan_vlan_id", "0", xkey, encrypt) != 0 ||
@@ -525,7 +532,8 @@ int portal_auth(const portal_info *info, const char *account,
     }
     if (json_get_str(res.body, "msg", msg, msg_sz) != 0)
         snprintf(msg, msg_sz, "(无 msg 字段)");
-    http_response_free(&res);
-
-    return (*result_code == 1) ? 0 : 1; /* result==1 为成功（ZZU.Py AuthResult.success） */
+    /* result==1 为登录成功；msg 包含"已经在线"表示已处于在线状态 */
+    if (*result_code == 1 || strstr(msg, "已经在线") != NULL || strstr(msg, "在线") != NULL)
+        return 0;
+    return 1;
 }

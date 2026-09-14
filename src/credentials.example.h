@@ -36,5 +36,8 @@
 #define AUTH_WAN_SUFFIX   ""
 #define AUTH_WANB_SUFFIX  ""
 
+/* Portal 验证服务器地址（郑州大学官方默认: 172.16.2.9:801） */
+#define PORTAL_SERVER     "172.16.2.9:801"
+
 #endif /* CREDENTIALS_H */
 
