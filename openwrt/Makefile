@@ -35,9 +35,15 @@ endef
 
 define Build/Prepare
 	mkdir -p $(PKG_BUILD_DIR)
-	$(CP) ./src/* $(PKG_BUILD_DIR)/
+	if [ -d ./src ]; then \
+		$(CP) ./src/* $(PKG_BUILD_DIR)/; \
+	else \
+		$(CP) ../src/* $(PKG_BUILD_DIR)/; \
+	fi
 	@if [ ! -f $(PKG_BUILD_DIR)/credentials.h ]; then \
-		$(CP) $(PKG_BUILD_DIR)/credentials.example.h $(PKG_BUILD_DIR)/credentials.h; \
+		if [ -f $(PKG_BUILD_DIR)/credentials.example.h ]; then \
+			$(CP) $(PKG_BUILD_DIR)/credentials.example.h $(PKG_BUILD_DIR)/credentials.h; \
+		fi \
 	fi
 endef
 
@@ -54,9 +60,17 @@ define Package/zzu-auth/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/zzu-auth $(1)/usr/bin/zzu-auth
 	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_BIN) ./files/zzu-auth.init $(1)/etc/init.d/zzu-auth
+	if [ -f ./files/zzu-auth.init ]; then \
+		$(INSTALL_BIN) ./files/zzu-auth.init $(1)/etc/init.d/zzu-auth; \
+	elif [ -f ../openwrt/files/zzu-auth.init ]; then \
+		$(INSTALL_BIN) ../openwrt/files/zzu-auth.init $(1)/etc/init.d/zzu-auth; \
+	fi
 	$(INSTALL_DIR) $(1)/etc/config
-	$(INSTALL_CONF) ./files/zzu-auth.config $(1)/etc/config/zzu-auth
+	if [ -f ./files/zzu-auth.config ]; then \
+		$(INSTALL_CONF) ./files/zzu-auth.config $(1)/etc/config/zzu-auth; \
+	elif [ -f ../openwrt/files/zzu-auth.config ]; then \
+		$(INSTALL_CONF) ../openwrt/files/zzu-auth.config $(1)/etc/config/zzu-auth; \
+	fi
 endef
 
 $(eval $(call BuildPackage,zzu-auth))
