@@ -1,0 +1,8 @@
+zzu-auth
+*.o
+*.ipk
+
+# 认证凭据（防止泄露到公开仓库）
+credentials.h
+src/credentials.h
+**/credentials.h

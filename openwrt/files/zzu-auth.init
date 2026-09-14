@@ -1,0 +1,55 @@
+#!/bin/sh /etc/rc.common
+# zzu-auth procd 启动脚本（支持单接口与多接口多拨实例）
+
+START=99
+STOP=10
+USE_PROCD=1
+
+start_instance() {
+	local section="$1"
+	local enabled interface user password suffix interval timeout check_url portal encrypt verbose
+
+	config_get_bool enabled "$section" enabled 0
+	[ "$enabled" -eq 1 ] || return 0
+
+	config_get interface "$section" interface ""
+	config_get user "$section" user ""
+	config_get password "$section" password ""
+	config_get suffix "$section" suffix ""
+	config_get interval "$section" interval 15
+	config_get timeout "$section" timeout 10
+	config_get check_url "$section" check_url ""
+	config_get portal "$section" portal ""
+	config_get_bool encrypt "$section" encrypt 0
+	config_get_bool verbose "$section" verbose 0
+
+	set -- -i "$interval" -t "$timeout"
+	[ -n "$interface" ] && set -- "$@" -I "$interface"
+	[ -n "$user" ]      && set -- "$@" -u "$user"
+	[ -n "$password" ]  && set -- "$@" -p "$password"
+	[ -n "$suffix" ]    && set -- "$@" -s "$suffix"
+	[ -n "$check_url" ] && set -- "$@" -c "$check_url"
+	[ -n "$portal" ]    && set -- "$@" -P "$portal"
+	[ "$encrypt" -eq 1 ] && set -- "$@" -e
+	[ "$verbose" -eq 1 ] && set -- "$@" -v
+
+	procd_open_instance "zzu-auth-${section}"
+	procd_set_param command /usr/bin/zzu-auth "$@"
+	procd_set_param respawn 3600 5 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+start_service() {
+	config_load zzu-auth
+	local has_instance=0
+	has_instance_cb() { has_instance=1; }
+	config_foreach has_instance_cb instance
+
+	if [ "$has_instance" -eq 1 ]; then
+		config_foreach start_instance instance
+	else
+		start_instance main
+	fi
+}
