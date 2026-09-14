@@ -33,3 +33,4 @@ if [ "$1" = "deploy" ]; then
     ssh "root@$ROUTER_IP" "chmod 755 /usr/bin/zzu-auth && /etc/init.d/zzu-auth restart && sleep 1 && ps | grep zzu-auth | grep -v grep"
     echo ">> 部署并重启成功！"
 fi
+

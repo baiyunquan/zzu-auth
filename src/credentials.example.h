@@ -21,13 +21,20 @@
 /* 校园网密码 */
 #define AUTH_PASSWORD "your_password_here"
 
-/* 运营商后缀：
+/* 默认运营商后缀（单网卡或未单独指定特定网卡时使用）：
  *   - 校园网原生 (教育网/内网): ""
- *   - 移动融合宽带:            "@cmcc"
  *   - 联通融合宽带:            "@unicom"
+ *   - 移动融合宽带:            "@cmcc"
  *   - 电信融合宽带:            "@telecom"
  */
-#define AUTH_SUFFIX   ""
+#define AUTH_SUFFIX       ""
+
+/* 双网卡 / 多拨接口独立运营商配置（可选，留空则使用全局 AUTH_SUFFIX）：
+ *   - 主物理 WAN 接口 (wan):     例如 "@unicom" (中国联通)
+ *   - 辅虚拟 WAN 接口 (macvlan0): 例如 "" (校园网原生)
+ */
+#define AUTH_WAN_SUFFIX   ""
+#define AUTH_WANB_SUFFIX  ""
 
 #endif /* CREDENTIALS_H */
 

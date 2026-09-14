@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -34,6 +35,31 @@ static void on_signal(int sig)
     g_stop = 1;
 }
 
+/* 运营商后缀规范化，支持常见别名如 unicom, cmcc, telecom, campus, none 等 */
+static const char *normalize_suffix(const char *raw)
+{
+    if (raw == NULL)
+        return "";
+    if (raw[0] == '@')
+        return raw;
+    if (raw[0] == '\0' ||
+        strcasecmp(raw, "campus") == 0 ||
+        strcasecmp(raw, "none") == 0 ||
+        strcasecmp(raw, "edu") == 0 ||
+        strcasecmp(raw, "zzu") == 0 ||
+        strcasecmp(raw, "null") == 0) {
+        return "";
+    }
+    if (strcasecmp(raw, "unicom") == 0 || strcasecmp(raw, "liantong") == 0)
+        return "@unicom";
+    if (strcasecmp(raw, "cmcc") == 0 || strcasecmp(raw, "yidong") == 0)
+        return "@cmcc";
+    if (strcasecmp(raw, "telecom") == 0 || strcasecmp(raw, "dianxin") == 0)
+        return "@telecom";
+
+    return raw;
+}
+
 static void usage(const char *prog)
 {
     fprintf(stderr,
@@ -46,7 +72,8 @@ static void usage(const char *prog)
         "凭据覆盖选项（可选）:\n"
         "  -u, --user <账号>        覆盖编译时配置的校园网账号（学号）\n"
         "  -p, --password <密码>    覆盖编译时配置的校园网密码\n"
-        "  -s, --suffix <后缀>      覆盖编译时配置的运营商后缀，如 @cmcc / @unicom / @telecom\n"
+        "  -s, --suffix <后缀/别名> 覆盖运营商后缀，支持 @unicom / @cmcc / @telecom\n"
+        "                           亦支持快捷别名: unicom, cmcc, telecom, campus (无后缀)\n"
         "\n"
         "运行选项:\n"
         "  -P, --portal <主机[:端口]> 手动指定 Portal 服务器（默认端口 801），\n"
@@ -135,7 +162,8 @@ int main(int argc, char **argv)
 {
     const char *user = AUTH_USER;
     const char *password = AUTH_PASSWORD;
-    const char *suffix = AUTH_SUFFIX;
+    const char *suffix = NULL;
+    int suffix_specified = 0;
     const char *check_url = DEFAULT_CHECK_URL;
     const char *portal_opt = NULL;
     const char *bind_ifname = NULL;
@@ -168,7 +196,10 @@ int main(int argc, char **argv)
         switch (ch) {
         case 'u': user = optarg; break;
         case 'p': password = optarg; break;
-        case 's': suffix = optarg; break;
+        case 's':
+            suffix = optarg;
+            suffix_specified = 1;
+            break;
         case 'P': portal_opt = optarg; break;
         case 'I': bind_ifname = optarg; break;
         case 'c': check_url = optarg; break;
@@ -206,6 +237,36 @@ int main(int argc, char **argv)
         interval = DEFAULT_INTERVAL_SEC;
     if (timeout <= 0)
         timeout = DEFAULT_TIMEOUT_SEC;
+
+    /* 确定运营商后缀优先级：
+     * 1. 命令行显式指定的 -s / --suffix
+     * 2. 根据绑定的网卡接口名自动匹配（若编译期定义了 AUTH_WAN_SUFFIX 或 AUTH_WANB_SUFFIX）
+     * 3. 全局默认 AUTH_SUFFIX
+     */
+    if (!suffix_specified) {
+        if (bind_ifname != NULL) {
+            if (strcmp(bind_ifname, "wan") == 0 || strcmp(bind_ifname, "eth1") == 0) {
+#ifdef AUTH_WAN_SUFFIX
+                suffix = AUTH_WAN_SUFFIX;
+#else
+                suffix = AUTH_SUFFIX;
+#endif
+            } else if (strcmp(bind_ifname, "macvlan0") == 0 ||
+                       strcmp(bind_ifname, "wanb") == 0 ||
+                       strcmp(bind_ifname, "wan_b") == 0) {
+#ifdef AUTH_WANB_SUFFIX
+                suffix = AUTH_WANB_SUFFIX;
+#else
+                suffix = AUTH_SUFFIX;
+#endif
+            } else {
+                suffix = AUTH_SUFFIX;
+            }
+        } else {
+            suffix = AUTH_SUFFIX;
+        }
+    }
+    suffix = normalize_suffix(suffix);
 
     /* 完整账号 = 账号 + 运营商后缀（对应 ZZU.Py auth() 的 isp_suffix） */
     char account[256];
