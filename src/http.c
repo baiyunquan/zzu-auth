@@ -77,7 +77,7 @@ static int tcp_connect(const char *host, const char *port, int timeout,
     int saved_errno = 0;
 
     memset(&hints, 0, sizeof hints);
-    hints.ai_family = AF_UNSPEC;
+    hints.ai_family = AF_INET; /* 校园网 Portal 为纯 IPv4 环境，避免 musl 查询 AAAA 记录超时 */
     hints.ai_socktype = SOCK_STREAM;
 
     int rc = getaddrinfo(host, port, &hints, &res);
