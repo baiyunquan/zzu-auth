@@ -4,6 +4,8 @@
  * 功能与 ZZU.Py 的校园网认证部分对齐：探测 Portal 状态，
  * 掉线时自动重新认证。纯 C99 + POSIX Socket，无任何第三方依赖。
  */
+#define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 
 #include <getopt.h>
@@ -85,6 +87,7 @@ static void usage(const char *prog)
         "  -t, --timeout <秒>       单次请求超时（默认 %d）\n"
         "  -e, --encrypt            启用 Portal 参数加密模式（多数场景不需要）\n"
         "  -1, --once               只执行一次后退出（适合 crontab）\n"
+        "  -l, --logout             执行注销（登出）后退出\n"
         "  -D, --daemon             后台运行（日志输出到 syslog）\n"
         "  -v, --verbose            输出调试日志\n"
         "  -h, --help               显示本帮助\n"
@@ -136,6 +139,20 @@ static int parse_host_port(const char *s, char *host, size_t hostsz, int *port)
     return 0;
 }
 
+/* 执行一次注销并记录日志，返回 0 表示成功 */
+static int do_logout(const portal_info *info, const char *account,
+                     int timeout, const char *bind_ifname)
+{
+    char err[512] = "";
+    int rc = portal_logout(info, account, timeout, bind_ifname, err, sizeof err);
+    if (rc == 0) {
+        log_info("注销成功 (账号: %s, IP: %s)", account, info->user_ip);
+        return 0;
+    }
+    log_error("注销请求失败: %s", err);
+    return 1;
+}
+
 /* 执行一次认证并记录日志，返回 0 表示成功 */
 static int do_auth(const portal_info *info, const char *account,
                    const char *password, int encrypt, int timeout,
@@ -175,6 +192,7 @@ int main(int argc, char **argv)
     int timeout = DEFAULT_TIMEOUT_SEC;
     int encrypt = 0;
     int once = 0;
+    int logout_flag = 0;
     int daemon_flag = 0;
 
     static const struct option long_opts[] = {
@@ -188,6 +206,7 @@ int main(int argc, char **argv)
         { "timeout",   required_argument, NULL, 't' },
         { "encrypt",   no_argument,       NULL, 'e' },
         { "once",      no_argument,       NULL, '1' },
+        { "logout",    no_argument,       NULL, 'l' },
         { "daemon",    no_argument,       NULL, 'D' },
         { "verbose",   no_argument,       NULL, 'v' },
         { "help",      no_argument,       NULL, 'h' },
@@ -195,7 +214,7 @@ int main(int argc, char **argv)
     };
 
     int ch;
-    while ((ch = getopt_long(argc, argv, "u:p:s:P:I:c:i:t:e1Dvh",
+    while ((ch = getopt_long(argc, argv, "u:p:s:P:I:c:i:t:e1lDvh",
                              long_opts, NULL)) != -1) {
         switch (ch) {
         case 'u': user = optarg; break;
@@ -211,6 +230,7 @@ int main(int argc, char **argv)
         case 't': timeout = atoi(optarg); break;
         case 'e': encrypt = 1; break;
         case '1': once = 1; break;
+        case 'l': logout_flag = 1; break;
         case 'D': daemon_flag = 1; break;
         case 'v': log_set_verbose(1); break;
         case 'h':
@@ -316,6 +336,19 @@ int main(int argc, char **argv)
         }
     }
 
+    if (logout_flag) {
+        if (!have_fixed_info) {
+            char err[512] = "";
+            portal_discover(check_url, timeout, bind_ifname, &info, err, sizeof err);
+        } else {
+            char host[128];
+            int port = 801;
+            parse_host_port(portal_opt, host, sizeof host, &port);
+            get_outbound_ip(host, port, bind_ifname, info.user_ip, sizeof info.user_ip);
+        }
+        return do_logout(&info, account, timeout, bind_ifname);
+    }
+
     if (bind_ifname != NULL && bind_ifname[0] != '\0')
         log_info("zzu-auth " VERSION " 启动，账号=%s，网卡=%s，检测间隔=%ds", account,
                  bind_ifname, interval);
@@ -340,8 +373,16 @@ int main(int argc, char **argv)
                 parse_host_port(portal_opt, host, sizeof host, &port);
                 if (get_outbound_ip(host, port, bind_ifname, info.user_ip,
                                     sizeof info.user_ip) == 0) {
-                    log_info("检测到未认证/掉线（网卡 %s IP: %s），开始认证...",
+                    log_info("检测到未认证/掉线（网卡 %s IP: %s），执行自愈：先强制注销旧会话...",
                              bind_ifname ? bind_ifname : "default", info.user_ip);
+                    char lerr[256] = "";
+                    if (portal_logout(&info, account, timeout, bind_ifname, lerr, sizeof lerr) == 0) {
+                        log_info("注销请求已发送，等待 Radius 会话释放...");
+                    } else {
+                        log_warn("注销请求未响应或失败（%s），继续尝试认证...", lerr);
+                    }
+                    usleep(300000); /* 暂停 300ms 确保 BRAS 彻底释放会话 */
+                    log_info("开始重新认证...");
                     exit_code = do_auth(&info, account, password, encrypt,
                                         timeout, bind_ifname);
                 } else {
@@ -359,7 +400,11 @@ int main(int argc, char **argv)
                 log_debug("网络在线（已认证）");
                 exit_code = 0;
             } else if (st == PORTAL_OFFLINE) {
-                log_info("检测到未认证（IP: %s），开始认证...", info.user_ip);
+                log_info("检测到未认证/掉线（IP: %s），执行自愈：先强制注销旧会话...", info.user_ip);
+                char lerr[256] = "";
+                portal_logout(&info, account, timeout, bind_ifname, lerr, sizeof lerr);
+                usleep(300000);
+                log_info("开始重新认证...");
                 exit_code = do_auth(&info, account, password, encrypt,
                                     timeout, bind_ifname);
             } else {

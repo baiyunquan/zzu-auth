@@ -57,4 +57,12 @@ int portal_auth(const portal_info *info, const char *account,
                 int *result_code, char *msg, size_t msg_sz,
                 char *err, size_t errsz);
 
+/*
+ * 执行 Portal 注销（登出）。
+ * 向 /eportal/portal/logout 发送注销请求，用于在掉线重试或手动注销时清理 Radius 状态。
+ * 成功返回 0；网络或解析错误返回 -1（err 中有说明）。
+ */
+int portal_logout(const portal_info *info, const char *account, int timeout,
+                  const char *bind_ifname, char *err, size_t errsz);
+
 #endif /* ZZU_PORTAL_H */

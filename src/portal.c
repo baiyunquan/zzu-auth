@@ -537,3 +537,42 @@ int portal_auth(const portal_info *info, const char *account,
         return 0;
     return 1;
 }
+
+int portal_logout(const portal_info *info, const char *account, int timeout,
+                  const char *bind_ifname, char *err, size_t errsz)
+{
+    char query[1024];
+    size_t off = 0;
+    const char *uip = info->user_ip;
+    if (strncmp(uip, "192.168.", 8) == 0)
+        uip = "";
+
+    if (query_put(query, sizeof query, &off, "callback", "dr1004", 0, 0) != 0 ||
+        query_put(query, sizeof query, &off, "user_account", account, 0, 0) != 0 ||
+        query_put(query, sizeof query, &off, "wlan_user_ip", uip, 0, 0) != 0) {
+        if (err && errsz > 0)
+            snprintf(err, errsz, "构造注销请求失败（参数过长）");
+        return -1;
+    }
+
+    char url[2048];
+    snprintf(url, sizeof url, "%s/eportal/portal/logout?%s",
+             info->portal_server, query);
+    log_debug("注销: GET %s", url);
+
+    http_response res;
+    if (http_get(url, bind_ifname, &res, timeout, err, errsz) != 0)
+        return -1;
+
+    if (res.status != 200 || res.body == NULL) {
+        if (err && errsz > 0)
+            snprintf(err, errsz, "Portal 服务返回 HTTP %d", res.status);
+        http_response_free(&res);
+        return -1;
+    }
+
+    log_debug("注销响应: %s", res.body);
+    http_response_free(&res);
+    return 0;
+}
+
