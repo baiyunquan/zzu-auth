@@ -5,6 +5,7 @@
 # 安装:       make install PREFIX=/usr DESTDIR=/tmp/root
 
 CC      ?= cc
+STRIP   ?= strip
 CFLAGS  ?= -O2 -std=c99 -Wall -Wextra -Wpedantic
 LDFLAGS ?=
 PREFIX  ?= /usr

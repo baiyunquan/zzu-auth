@@ -9,7 +9,7 @@
 - 功能与 ZZU.Py 对齐：Portal 自动探测（重定向跟随、`userip`/`wlanuserip` 提取、
   `a41.js` 端口推断）、Portal 认证、可选 XOR 参数加密、运营商后缀
 
-## 设计参考（避免重复造轮子）
+## 设计参考
 
 | 部分 | 参照的成熟做法 |
 | ---- | -------------- |
@@ -34,26 +34,102 @@
    /* 校园网密码 */
    #define AUTH_PASSWORD "mypassword"
 
-   /* 运营商后缀（移动 @cmcc / 联通 @unicom / 电信 @telecom / 原生校园网留空 ""） */
-   #define AUTH_SUFFIX   "@cmcc"
+   /* 运营商后缀（联通 @unicom / 移动 @cmcc / 电信 @telecom / 原生校园网留空 ""） */
+   #define AUTH_SUFFIX   "@unicom"
+
+   /* 双网卡 / 多拨接口独立运营商配置（可选，留空则使用全局 AUTH_SUFFIX）：
+    *   - 主物理 WAN 接口 (wan):     例如 "@unicom"
+    *   - 辅虚拟 WAN 接口 (macvlan0): 例如 "@unicom" 或 ""
+    */
+   #define AUTH_WAN_SUFFIX   ""
+   #define AUTH_WANB_SUFFIX  ""
    ```
 
 > [!IMPORTANT]
 > **安全防泄露保障**：
-> `src/credentials.h` 已经加入 `.gitignore`，**不会**被 git 追踪或提交，可放心将整个代码仓库推送到 GitHub、Gitee 等公开远程仓库。
+> `src/credentials.h` 已经加入 `.gitignore`，**不会**被 git 追踪或提交，可放心将整个代码仓库推送到 GitHub、Gitee 等公开远程仓库。若未配置此文件，构建时会自动拦截报错并引导配置。
 
-## 构建
+## 从零开始构建（全新计算机视角）
 
-### 本机 / 普通 Linux
+假设您刚来到一台**全新的 Linux 计算机**，仅通过 `git clone` 拉取了本仓库。请根据您的目标运行设备选择对应的构建方式：
+
+### 方案 A：为路由器/软路由交叉编译（全自动免环境配置，强烈推荐 ⭐⭐⭐⭐⭐）
+
+家用路由器绝大部分运行在 **ARM64** 或 **MIPS** 架构上，在 x86 PC 上直接编译出的程序无法直接在路由器上运行。
+
+在新计算机上，**无需配置庞大臃肿的 OpenWrt SDK，也无需 root 权限安装复杂的交叉编译器**。项目内置的 `build.sh` 脚本仅需系统自带的 `curl` 与 `tar`，会自动拉取独立的 musl-cross 交叉工具链，生成**纯静态链接（static-pie）、零外部动态库依赖的 ELF 二进制文件**，可无缝运行在任何 Linux / OpenWrt 路由器上：
+
+#### 常见路由器 CPU 架构速查
+
+| 目标架构参数 | 典型芯片与常见路由器型号举例 |
+| :--- | :--- |
+| **`arm64`**<br/>(aarch64) | **主流中高端 Wi-Fi 6 路由器 / 软路由**：<br/>• 京东云无线宝（雅典娜 Athena、鲁班、亚瑟 AX1800 Pro 等）<br/>• 红米 AX6000 / AX6000S、小米 AX3000 / AX9000<br/>• 友善 NanoPi R4S / R5S、树莓派 4 / 5<br/>• 联发科 Filogic 系列（MT7981 / MT7986）运营商定制 Wi-Fi 6 路由 |
+| **`mips`**<br/>(mipsel 小端) | **经典千兆/百兆入门级路由器**：<br/>• 联发科 MT7621 / MT7620（如斐讯 K2P、新路由 Newifi 3、极路由、歌华链等大量经典机型） |
+| **`mips-be`**<br/>(mips 大端) | **老旧高通/Atheros 芯片**：<br/>• AR9331、AR9344、QCA953x 等早期 OpenWrt 路由器 |
+| **`armhf`**<br/>(arm 32位) | **部分早期 ARM 路由**：<br/>• 高通 IPQ4019、博通 BCM4709 等 |
+
+#### 一键构建步骤
 
 ```sh
-make            # 编译生成 ./zzu-auth
-make strip      # 可选：strip 减小体积
+# 1. 确保已生成并配置好 src/credentials.h（见上文）
+
+# 2. 赋予构建脚本执行权限
+chmod +x build.sh
+
+# 3. 为目标架构执行一键编译：
+./build.sh arm64   # 适用于 ARM64 路由器，生成 ./zzu-auth-arm64（约 119KB）
+# 或
+./build.sh mips    # 适用于 MIPS (MT7621) 路由器，生成 ./zzu-auth-mipsel（约 177KB）
 ```
 
-> 若未配置 `src/credentials.h`，`make` 将提示错误并引导复制模板。
+#### （可选）一键编译并直推部署至路由器
 
-### OpenWrt 交叉编译（SDK）
+若路由器已开启 SSH 且网络互通，支持一键完成编译、传输与热重载：
+
+```sh
+./build.sh arm64 deploy 192.168.1.1
+# 脚本将自动完成：交叉编译 -> scp 传输到 /usr/bin/zzu-auth -> 重启后台服务 -> 校验运行状态
+```
+
+---
+
+### 方案 B：本机直接编译（在当前 x86_64 Linux PC/服务器运行）
+
+若您打算在当前 Linux 计算机本机、服务器或 Linux 虚拟机中直接运行认证客户端：
+
+```sh
+# 1. 确保新机器已安装基础 C 编译工具（gcc + make）
+#    Ubuntu / Debian: sudo apt update && sudo apt install -y build-essential
+#    Arch Linux:     sudo pacman -S base-devel
+#    Alpine Linux:   apk add build-base
+
+# 2. 编译并压缩产物体积
+make
+make strip
+
+# 编译完成！当前目录下的 ./zzu-auth 即为可执行文件（约 40KB）
+./zzu-auth -v
+```
+
+---
+
+### 方案 C：使用已有系统交叉链手动编译（高级）
+
+若新计算机已通过系统包管理器安装了目标架构 GCC（如 `gcc-aarch64-linux-gnu`）：
+
+```sh
+# 编译 ARM64 静态二进制
+make CC="aarch64-linux-gnu-gcc -static" STRIP=aarch64-linux-gnu-strip
+
+# 编译 MIPS (mipsel) 静态二进制
+make CC="mipsel-linux-gnu-gcc -static" STRIP=mipsel-linux-gnu-strip
+```
+
+---
+
+### 方案 D：OpenWrt SDK 源码树内编译（生成 .ipk 安装包）
+
+如需打包成标准的 OpenWrt `.ipk` 安装包供 opkg 安装：
 
 ```sh
 # 在 OpenWrt SDK 根目录下
@@ -64,10 +140,8 @@ cp -r /path/to/ZZU.Linux/src package/zzu-auth/
 
 make menuconfig        # Network -> Campus Network -> zzu-auth 选为 M
 make package/zzu-auth/compile V=s
-# 产物在 bin/packages/<arch>/base/zzu-auth_*.ipk
+# 产物位于 bin/packages/<arch>/base/zzu-auth_*.ipk
 ```
-
-也可以直接在路由器/交叉工具链上：`make CC=<triplet>-gcc`。
 
 ## 使用
 
@@ -88,9 +162,11 @@ zzu-auth [选项]
 | `-i, --interval` | 检测间隔秒数（默认 60） |
 | `-t, --timeout` | 单次请求超时秒数（默认 10） |
 | `-e, --encrypt` | 启用 Portal 参数加密（ZZU.Py 的 XOR 模式，多数场景不需要） |
-| `-1, --once` | 只执行一次（适合 crontab） |
+| `-1, --once` | 只执行一次后退出（适合 crontab） |
+| `-l, --logout` | 执行注销（登出）后退出（用于排障或清理僵死会话） |
 | `-D, --daemon` | 后台运行（日志进 syslog） |
 | `-v, --verbose` | 调试日志 |
+| `-h, --help` | 显示帮助信息 |
 
 示例：
 
