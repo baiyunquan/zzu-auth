@@ -14,16 +14,16 @@ usage() {
     echo "用法: $0 <目标架构> [deploy] [路由器IP]"
     echo ""
     echo "支持的目标架构:"
-    echo "  arm64  / aarch64  : 适用于现代 Wi-Fi 6 路由/软路由 (如京东云雅典娜、红米 AX6000、NanoPi R4S/R5S、树莓派4/5)"
+    echo "  arm64  / aarch64  : 适用于现代 64 位路由 (如红米 AX6000、NanoPi R4S/R5S、树莓派4/5、第三方 OpenWrt 雅典娜)"
+    echo "  athena / arm      : 适用于京东云雅典娜官方固件 (32位 ARMv7l / arm-musl)"
     echo "  mips   / mipsel   : 适用于 MIPS 小端芯片 (如联发科 MT7621/MT7620、斐讯 K2P、新路由 Newifi 3 等)"
     echo "  mips-be           : 适用于 MIPS 大端芯片 (如高通/Atheros AR9331/AR9344 等老旧机型)"
-    echo "  armhf  / arm      : 适用于 ARM 32位架构 (如高通 IPQ4019 等)"
     echo "  native / local    : 使用本机 GCC 直接编译 (适用于本机运行测试)"
     echo ""
     echo "示例:"
-    echo "  $0 arm64                      # 编译 ARM64 静态二进制"
+    echo "  $0 athena                     # 编译适用于京东云雅典娜官方固件的二进制"
     echo "  $0 mips                       # 编译 MIPS (MT7621) 静态二进制"
-    echo "  $0 arm64 deploy 192.168.1.1   # 编译并一键推送部署到路由器"
+    echo "  $0 arm64                      # 编译通用 64 位 ARM 二进制"
     exit 1
 }
 
@@ -59,10 +59,10 @@ get_musl_toolchain() {
 
     TARGET_CC="$CC_PATH"
     TARGET_STRIP="$STRIP_PATH"
-    STATIC_FLAG="-static"
+    STATIC_FLAG="-static -no-pie"
 }
 
-STATIC_FLAG="-static"
+STATIC_FLAG="-static -no-pie"
 
 case "$TARGET" in
     arm64|aarch64)
@@ -70,6 +70,12 @@ case "$TARGET" in
         OUT_BIN="$DIR/zzu-auth-arm64"
         echo ">> 目标架构: ARM64 / aarch64"
         get_musl_toolchain "aarch64-linux-musl-cross.tgz" "aarch64-linux-musl-cross" "aarch64-linux-musl-gcc" "aarch64-linux-musl-strip"
+        ;;
+    athena|arm|armv7|armv7l)
+        check_credentials
+        OUT_BIN="$DIR/zzu-auth-athena"
+        echo ">> 目标架构: 京东云雅典娜官方固件 (ARM 32位 musl)"
+        get_musl_toolchain "arm-linux-musleabi-cross.tgz" "arm-linux-musleabi-cross" "arm-linux-musleabi-gcc" "arm-linux-musleabi-strip"
         ;;
     mips|mipsel|mips-le)
         check_credentials
@@ -82,12 +88,6 @@ case "$TARGET" in
         OUT_BIN="$DIR/zzu-auth-mips"
         echo ">> 目标架构: MIPS 大端 (mips / AR9331)"
         get_musl_toolchain "mips-linux-muslsf-cross.tgz" "mips-linux-muslsf-cross" "mips-linux-muslsf-gcc" "mips-linux-muslsf-strip"
-        ;;
-    arm|armhf)
-        check_credentials
-        OUT_BIN="$DIR/zzu-auth-armhf"
-        echo ">> 目标架构: ARM 32位 hard-float"
-        get_musl_toolchain "arm-linux-musleabihf-cross.tgz" "arm-linux-musleabihf-cross" "arm-linux-musleabihf-gcc" "arm-linux-musleabihf-strip"
         ;;
     native|local)
         check_credentials
