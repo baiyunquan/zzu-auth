@@ -59,11 +59,21 @@ endef
 define Package/zzu-auth/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/zzu-auth $(1)/usr/bin/zzu-auth
+	if [ -f ./files/zzu-link-watchdog.sh ]; then \
+		$(INSTALL_BIN) ./files/zzu-link-watchdog.sh $(1)/usr/bin/zzu-link-watchdog; \
+	elif [ -f ../scripts/zzu-link-watchdog.sh ]; then \
+		$(INSTALL_BIN) ../scripts/zzu-link-watchdog.sh $(1)/usr/bin/zzu-link-watchdog; \
+	fi
 	$(INSTALL_DIR) $(1)/etc/init.d
 	if [ -f ./files/zzu-auth.init ]; then \
 		$(INSTALL_BIN) ./files/zzu-auth.init $(1)/etc/init.d/zzu-auth; \
 	elif [ -f ../openwrt/files/zzu-auth.init ]; then \
 		$(INSTALL_BIN) ../openwrt/files/zzu-auth.init $(1)/etc/init.d/zzu-auth; \
+	fi
+	if [ -f ./files/zzu-link-watchdog.init ]; then \
+		$(INSTALL_BIN) ./files/zzu-link-watchdog.init $(1)/etc/init.d/zzu-link-watchdog; \
+	elif [ -f ../openwrt/files/zzu-link-watchdog.init ]; then \
+		$(INSTALL_BIN) ../openwrt/files/zzu-link-watchdog.init $(1)/etc/init.d/zzu-link-watchdog; \
 	fi
 	$(INSTALL_DIR) $(1)/etc/config
 	if [ -f ./files/zzu-auth.config ]; then \

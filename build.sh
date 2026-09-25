@@ -118,6 +118,10 @@ file "$OUT_BIN"
 if [ "$ACTION" = "deploy" ]; then
     echo ">> 正在部署至路由器 root@$ROUTER_IP..."
     scp -O "$OUT_BIN" "root@$ROUTER_IP:/usr/bin/zzu-auth"
-    ssh "root@$ROUTER_IP" "chmod 755 /usr/bin/zzu-auth && /etc/init.d/zzu-auth restart && sleep 1 && ps | grep zzu-auth | grep -v grep"
+    if [ -f "$DIR/scripts/zzu-link-watchdog.sh" ]; then
+        scp -O "$DIR/scripts/zzu-link-watchdog.sh" "root@$ROUTER_IP:/usr/bin/zzu-link-watchdog"
+        ssh "root@$ROUTER_IP" "chmod 755 /usr/bin/zzu-link-watchdog"
+    fi
+    ssh "root@$ROUTER_IP" "chmod 755 /usr/bin/zzu-auth && (/etc/init.d/zzu-auth restart 2>/dev/null || true) && sleep 1 && ps | grep zzu-auth | grep -v grep"
     echo ">> 部署成功！"
 fi
