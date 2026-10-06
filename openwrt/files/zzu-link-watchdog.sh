@@ -1,26 +1,26 @@
 #!/bin/sh
 #
-# zzu-link-watchdog - 郑州大学校园网链路状态联动与自愈看门狗
+# zzu-link-watchdog - 郑州大学校园网链路状态自愈看门狗 (优化版)
 #
 # 作用：
 # 针对校园网接入层交换机（如锐捷、华为）在突发高并发（如 PCDN、多连接 UDP 洪峰）时
 # 触发 300 秒（5分钟）端口惩罚阻断（Storm-Control / ErrDisable）的问题：
 # 本脚本在后台周期监测上游连通性。当判定断链/假死时：
-# 1. 软件闪断上游接口（默认 eth4）：触发物理 Carrier Down->Up，清除交换机硬件惩罚锁存器；
-# 2. 软件闪断下游接口（默认 eth0）：向级联的下游主路由（如 MT7621）透传断网信号，
-#    触发下游主路由立即清空过期 conntrack、刷新 DHCP 租约并秒级重新认证。
+# 软件闪断上游接口（默认 eth4）：触发物理 Carrier Down->Up，清除交换机硬件惩罚锁存器。
+# 注意：严禁闪断下游接口（如连接 MT7621 的 eth0），以避免造成下游主路由网卡抖动、
+# netifd 拆链及 HomeProxy/Tailscale 重载造成的 CPU 100% 雪崩风暴！
 #
 # 兼容性：纯 POSIX Shell，兼容 OpenWrt、ImmortalWrt、Busybox ash 及各大 Linux 发行版。
 #
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 LOG_TAG="zzu-watchdog"
 
 # 默认配置
 INTERVAL=10          # 探测周期（秒）
 TIMEOUT=3            # 单次探测超时（秒）
-FAIL_THRESHOLD=3     # 触发自愈的连续失败阈值
-COOLDOWN=60          # 自愈后冷却保护时间（秒）
+FAIL_THRESHOLD=5     # 连续失败触发自愈阈值（5次 = 50秒，防瞬时网络抖动）
+COOLDOWN=90          # 自愈后冷却保护时间（秒，留足协商与认证时间）
 PORTAL_HOST="172.16.2.9"
 PORTAL_PORT="801"
 CHECK_TARGET="223.5.5.5"
@@ -48,13 +48,13 @@ log_error() {
 
 usage() {
     cat <<EOFU
-zzu-link-watchdog $VERSION - 校园网链路状态联动与自愈看门狗
+zzu-link-watchdog $VERSION - 校园网链路状态自愈看门狗
 
 用法: $0 [选项]
 
 选项:
-  -u, --upstream <网卡>     上游 WAN 接口（连接校园网墙孔，默认自动探测）
-  -d, --downstream <网卡>   下游 LAN 接口（连接下级路由器，AP 级联模式使用）
+  -u, --upstream <网卡>     上游 WAN 接口（连接校园网墙孔，默认自动探测 eth4）
+  -d, --downstream <网卡>   下游 LAN 接口（通常不建议配置，避免引起下级重载）
   -t, --target <IP/域名>    探测目标地址（默认: $CHECK_TARGET）
   -P, --portal <IP:端口>    校园网 Portal 服务器（默认: $PORTAL_HOST:$PORTAL_PORT）
   -i, --interval <秒>       健康探测间隔（默认: $INTERVAL 秒）
@@ -69,18 +69,17 @@ zzu-link-watchdog $VERSION - 校园网链路状态联动与自愈看门狗
 示例:
   $0 -v                     # 前台详细模式运行
   $0 -D                     # 后台守护模式运行
-  $0 -u eth4 -d eth0 -D     # 显式指定上游为 eth4，下游为 eth0
+  $0 -u eth4 -D             # 显式指定上游网卡为 eth4 并后台运行
 EOFU
     exit 0
 }
 
-# 自动推断上下游接口
+# 自动推断上游接口
 detect_interfaces() {
     # 场景 1: 京东云雅典娜 AP 模式 (br-lan 桥接 eth0~eth4)
     if [ -d "/sys/class/net/br-lan" ]; then
-        if [ -d "/sys/class/net/eth4" ] && [ -d "/sys/class/net/eth0" ]; then
+        if [ -d "/sys/class/net/eth4" ]; then
             [ -z "$UPSTREAM_IF" ] && UPSTREAM_IF="eth4"
-            [ -z "$DOWNSTREAM_IF" ] && DOWNSTREAM_IF="eth0"
         fi
     fi
 
@@ -124,35 +123,34 @@ check_connectivity() {
     return 1
 }
 
-# 执行链路状态联动自愈
+# 执行链路状态自愈
 trigger_self_healing() {
-    log_error "上游网络连续失败已达阈值 ($FAIL_THRESHOLD 次)，触发链路状态联动自愈！"
+    log_error "上游网络连续失败已达阈值 ($FAIL_THRESHOLD 次)，触发上游链路自愈复位！"
 
     # 1. 软件闪断上游接口 (消除校园网交换机硬件错误锁定)
     if [ -n "$UPSTREAM_IF" ] && [ -d "/sys/class/net/$UPSTREAM_IF" ]; then
-        log_warn "[自愈动作 1/2] 正在闪断上游网卡 $UPSTREAM_IF (Link Down -> Up)..."
+        log_warn "[自愈操作] 正在闪断上游网卡 $UPSTREAM_IF (Link Down -> Up)..."
         ip link set "$UPSTREAM_IF" down 2>/dev/null || ifconfig "$UPSTREAM_IF" down 2>/dev/null || true
         sleep 1
         ip link set "$UPSTREAM_IF" up 2>/dev/null || ifconfig "$UPSTREAM_IF" up 2>/dev/null || true
-        log_info "[自愈动作 1/2] 上游网卡 $UPSTREAM_IF 物理载波复位完成，已强制清除交换机惩罚状态"
+        log_info "[自愈操作] 上游网卡 $UPSTREAM_IF 物理载波复位完成，已强制清除交换机惩罚状态"
     fi
 
-    # 2. 软件闪断下游级联接口 (透传 Carrier Down 信号给下级主路由)
+    # 2. 如果用户显式指定了下游接口（默认空，不建议触碰下游网卡，防止 MT7621 HomeProxy 雪崩）
     if [ -n "$DOWNSTREAM_IF" ] && [ -d "/sys/class/net/$DOWNSTREAM_IF" ]; then
-        log_warn "[自愈动作 2/2] 正在向级联下游网卡 $DOWNSTREAM_IF 透传断链信号..."
+        log_warn "[自愈操作] 检测到显式指定了下游接口 $DOWNSTREAM_IF，执行闪断..."
         ip link set "$DOWNSTREAM_IF" down 2>/dev/null || ifconfig "$DOWNSTREAM_IF" down 2>/dev/null || true
         sleep 1
         ip link set "$DOWNSTREAM_IF" up 2>/dev/null || ifconfig "$DOWNSTREAM_IF" up 2>/dev/null || true
-        log_info "[自愈动作 2/2] 下游网卡 $DOWNSTREAM_IF 载波联动完成，下游设备即刻感知并重连"
     fi
 
-    # 3. 若本机有运行 zzu-auth，可触发一次热重启或重认证
+    # 3. 若本机有运行 zzu-auth，触发快速重认证
     if [ -x "/usr/bin/zzu-auth" ]; then
         log_info "触发本地 zzu-auth 快速重认证..."
         killall -HUP zzu-auth 2>/dev/null || true
     fi
 
-    log_warn "自愈操作执行完毕，进入 ${COOLDOWN} 秒冷却防抖保护期..."
+    log_warn "自愈操作执行完毕，进入 ${COOLDOWN} 秒防抖冷却保护期..."
     sleep "$COOLDOWN"
     log_info "冷却期结束，恢复常规健康监测"
 }
@@ -189,7 +187,7 @@ while [ $# -gt 0 ]; do
             detect_interfaces
             echo "=== zzu-link-watchdog 自检报告 ==="
             echo "上游接口 (Upstream):   $UPSTREAM_IF"
-            echo "下游接口 (Downstream): $DOWNSTREAM_IF"
+            echo "下游接口 (Downstream): ${DOWNSTREAM_IF:-无 (保护下级主路由)}"
             echo "Portal 探测地址:       $PORTAL_HOST:$PORTAL_PORT"
             echo "外网探测地址:          $CHECK_TARGET"
             echo "健康状态检测中..."
@@ -223,7 +221,6 @@ if [ "$ONCE_MODE" -eq 1 ]; then
 fi
 
 if [ "$DAEMON_MODE" -eq 1 ]; then
-    # fork 到后台运行
     nohup "$0" -u "$UPSTREAM_IF" ${DOWNSTREAM_IF:+-d "$DOWNSTREAM_IF"} \
          -t "$CHECK_TARGET" -P "$PORTAL_HOST:$PORTAL_PORT" \
          -i "$INTERVAL" -f "$FAIL_THRESHOLD" -c "$COOLDOWN" >/dev/null 2>&1 &
